@@ -17,9 +17,9 @@ namespace SerialCommMonitor
     {
         private readonly Logger logger = LogManager.GetCurrentClassLogger();
 
-        private SerialPort serialPort1 = null;
+        private static SerialPort serialPort1 = null;
 
-        private SerialPort serialPort2 = null;
+        private static SerialPort serialPort2 = null;
 
         public MainWindow()
         {
@@ -129,21 +129,25 @@ namespace SerialCommMonitor
             // 确保串口关闭，准备重新打开
             closeSerialPorts();
 
-            if (!openSerialPort(out serialPort1, comName1, baudrate, parity, dataBit, stopBits, new SerialDataReceivedEventHandler(SerialPort1DataReceivedEventHandler)))
+            if (!openSerialPort(out serialPort1, comName1, baudrate, parity, dataBit, stopBits))
             {
                 MessageBox.Show("串口1打开失败，请停止后重试");
                 return;
             }
-            if (!openSerialPort(out serialPort2, comName2, baudrate, parity, dataBit, stopBits, new SerialDataReceivedEventHandler(SerialPort2DataReceivedEventHandler)))
+            if (!openSerialPort(out serialPort2, comName2, baudrate, parity, dataBit, stopBits))
             {
                 MessageBox.Show("串口2打开失败，请停止后重试");
                 return;
             }
+
+            StopSerialPortThread();
+            StartSerialPortThread();
         }
 
         private void stopProcess()
         {
             closeSerialPorts();
+            StopSerialPortThread();
             btnStart.Text = "开始";
         }
 
@@ -203,7 +207,7 @@ namespace SerialCommMonitor
             return rc;
         }
 
-        private bool openSerialPort(out SerialPort serialPort, String comName, int baudrate, Parity parity, int dataBit, StopBits stopBits, SerialDataReceivedEventHandler handler)
+        private bool openSerialPort(out SerialPort serialPort, String comName, int baudrate, Parity parity, int dataBit, StopBits stopBits)
         {
             bool isSucceed = true;
             SerialPort port = null;
@@ -211,7 +215,6 @@ namespace SerialCommMonitor
             try
             {
                 port = new SerialPort(comName, baudrate, parity, dataBit, stopBits);
-                port.DataReceived += handler;
                 port.Open();
                 serialPort = port;
             }
@@ -224,81 +227,6 @@ namespace SerialCommMonitor
 
 
             return isSucceed;
-        }
-
-        /// <summary>
-        /// 串口1收到数据的事件回调动作
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void SerialPort1DataReceivedEventHandler(object sender, SerialDataReceivedEventArgs e)
-        {
-            int count = 0;
-            byte[] buff = new byte[1024];
-
-            try
-            {
-                count = serialPort1.BytesToRead;
-                do
-                {
-                    if (count > 1024)
-                    {
-                        count = 1024;
-                    }
-                    int rc = serialPort1.Read(buff, 0, count);
-                    if (rc > 0)
-                    {
-                        byte[] b = new byte[rc];
-                        Array.Copy(buff, b, rc);
-                        updateLog("串口1", b, Color.Red);
-                        serialPort2.Write(b, 0, rc);
-                    }
-                } while (serialPort1.BytesToRead > 0);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message + "\n" + ex.StackTrace);
-            }
-
-            return;
-        }
-
-
-        /// <summary>
-        /// 串口2收到数据的事件回调动作
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private void SerialPort2DataReceivedEventHandler(object sender, SerialDataReceivedEventArgs e)
-        {
-            int count = 0;
-            byte[] buff = new byte[1024];
-
-            try
-            {
-                count = serialPort2.BytesToRead;
-                do
-                {
-                    if (count > 1024)
-                    {
-                        count = 1024;
-                    }
-                    int rc = serialPort2.Read(buff, 0, count);
-                    if (rc > 0)
-                    {
-                        byte[] b = new byte[rc];
-                        Array.Copy(buff, b, rc);
-                        updateLog("串口2", b, Color.Blue);
-                        serialPort1.Write(b, 0, rc);
-                    }
-                } while (serialPort2.BytesToRead > 0);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message + "\n" + ex.StackTrace);
-            }
-
-            return;
         }
 
         delegate void SetTextCallback(string text, Color color);
@@ -316,14 +244,15 @@ namespace SerialCommMonitor
                 }
                 else
                 {
-                    Monitor.Enter(rtxtLog);
+
                     try
                     {
                         log = log.Replace('\0', ' ');
                         log = log.Replace('\r', ' ');
                         log = log.Replace('\n', ' ');
 
-                        rtxtLog.AppendText(log);
+                        Monitor.Enter(rtxtLog);
+                        rtxtLog.AppendText(log + "\n");
                         //rtxtLog.Text = rtxtLog.Text + log;
                         rtxtLog.Select(rtxtLog.Text.Length - log.Length, log.Length);
                         rtxtLog.SelectionColor = color;
@@ -334,7 +263,7 @@ namespace SerialCommMonitor
                     }
                     catch (Exception ee)
                     {
-                        MessageBox.Show(ee.Message + "\n" + ee.StackTrace);
+                        Console.WriteLine(ee.Message + "\n" + ee.StackTrace);
                     }
                     finally
                     {
@@ -360,8 +289,85 @@ namespace SerialCommMonitor
 
             String hexLog = StringUtils.bytes2HexString(buff);
             String asciiLog = StringUtils.bytes2ASCIIString(buff);
-            String log = time + "," + comName + ":\n" + "hex log:" + hexLog + "\nasciilog:" + asciiLog + "\n";
+            String log = time + "," + comName + ":\n" + "hex log:" + hexLog + "\nasciilog:" + asciiLog;
             SetText(log, color);
+        }
+
+        private void StopSerialPortThread()
+        {
+            isThreadRun = false;
+            Thread.Sleep(1000);
+            serialProcess = null;
+        }
+
+        private void StartSerialPortThread()
+        {
+            StopSerialPortThread();
+
+
+            isThreadRun = true;
+            serialProcess = new Thread(SerialPortProcessThread);
+            serialProcess.Start();
+        }
+
+        private Thread serialProcess;
+
+        public bool isThreadRun = true;
+
+
+        public void SerialPortProcessThread()
+        {
+            int count;
+            byte[] buff = new byte[409600];
+
+            while (isThreadRun)
+            {
+                try
+                {
+                    count = serialPort1.BytesToRead;
+                    if (count > 0)
+                    {
+                        if (count > 409600)
+                        {
+                            count = 409600;
+                        }
+                        int rc = serialPort1.Read(buff, 0, count);
+                        if (rc > 0)
+                        {
+                            byte[] b = new byte[rc];
+                            Array.Copy(buff, b, rc);
+                            updateLog("串口1", b, Color.Red);
+                            serialPort2.Write(b, 0, rc);
+                        }
+                    }
+
+                    count = serialPort2.BytesToRead;
+                    if (count > 0)
+                    {
+                        if (count > 409600)
+                        {
+                            count = 409600;
+                        }
+                        int rc = serialPort2.Read(buff, 0, count);
+                        if (rc > 0)
+                        {
+                            byte[] b = new byte[rc];
+                            Array.Copy(buff, b, rc);
+                            updateLog("串口2", b, Color.Blue);
+                            serialPort1.Write(b, 0, rc);
+                        }
+                    }
+
+                    Thread.Sleep(5);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message + "\n" + ex.StackTrace);
+                }
+
+            }
+
+            return;
         }
     }
 }

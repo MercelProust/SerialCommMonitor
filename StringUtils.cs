@@ -10,7 +10,7 @@ namespace SerialCommMonitor
     {
         public static String bytes2HexString(byte[] buff)
         {
-            return BitConverter.ToString(buff, 0).ToLower(); ;
+            return BitConverter.ToString(buff, 0).ToLower().Replace('-', ' '); ;
         }
 
         public static byte[] hexString2Bytes(String s)
